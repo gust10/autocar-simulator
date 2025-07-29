@@ -23,8 +23,8 @@ import cv2
 class VehicleSim(ShowBase):
     def __init__(self):
         ShowBase.__init__(self)
-        self.set_background_color(0.1, 0.1, 0.1)
-        self.disable_mouse()
+        self.set_background_color(0.09, 0.353, 0.922) # Set background color to blue
+        # self.disable_mouse()
 
         debugNode = BulletDebugNode('Debug')
         debugNode.showWireframe(True)
@@ -49,7 +49,7 @@ class VehicleSim(ShowBase):
         # Steering control
         self.steering = 0.0
         self.steeringClamp = 30.0  # degrees
-        self.steeringIncrement = 300.0  # degrees per second
+        self.steeringIncrement = 100.0  # degrees per second
 
 
         
@@ -92,26 +92,31 @@ class VehicleSim(ShowBase):
         ground_vis = self.render.attachNewNode(cm.generate())
         ground_vis.setPos(0, 0, -1)
         ground_vis.setHpr(0, -90, 0)
-        ground_vis.setColor(0.5, 0.5, 0.5)
+        ground_vis.setColor(1, 1, 1)
 
 
 
     def setup_vehicle(self):
         # Chassis
-        shape = BulletBoxShape(Vec3(0.7, 1.5, 0.5))
+        shape = BulletBoxShape(Vec3(0.7, 2, 0.2))
         ts = TransformState.makePos(Point3(0, 0, 0.5))
 
         self.chassis_np = self.render.attachNewNode(BulletRigidBodyNode('Vehicle'))
         self.chassis_np.node().addShape(shape, ts)
         self.chassis_np.setPos(0, 0, 0)
         self.chassis_np.node().setMass(400.0)
+        self.chassis_np.node().set_linear_damping(0.1) # added
+        self.chassis_np.node().set_angular_damping(0.1) # added
         self.chassis_np.node().setDeactivationEnabled(False)
         self.world.attachRigidBody(self.chassis_np.node())
 
         # Chassis visual
-        # vis_model = loader.loadModel("models/box")  # Replace with better model if desired
-        # vis_model.setScale(0.7, 1.5, 0.5)
-        # vis_model.reparentTo(self.chassis_np)
+        vis_model = loader.loadModel("models/autocar.gltf")  # Replace with better model if desired
+        vis_model.setHpr(0, 0, 0)  # Adjust rotation if needed
+        vis_model.setScale(1.2, 1.3, 1.0)  # Scale to match physics shape
+        vis_model.setPos(0, 0, 0.2)  # Position to match physics shape
+        
+        vis_model.reparentTo(self.chassis_np)
 
         # Vehicle setup
         self.vehicle = BulletVehicle(self.world, self.chassis_np.node())
@@ -120,35 +125,35 @@ class VehicleSim(ShowBase):
 
         #오른쪽, 앞, 위
         self.wheel_nps = []
-        self.add_wheel(Point3( 1.1,  1.1, 0.5), True)   # Front right
-        self.add_wheel(Point3(-1.1,  1.1, 0.5), True)   # Front left
-        self.add_wheel(Point3( 1.1, -1.1, 0.5), False)  # Rear right
-        self.add_wheel(Point3(-1.1, -1.1, 0.5), False)  # Rear left
+        self.add_wheel(Point3( 1.4,  1.4, 0.5), True)   # Front right
+        self.add_wheel(Point3(-1.4,  1.4, 0.5), True)   # Front left
+        self.add_wheel(Point3( 1.4, -1.4, 0.5), False)  # Rear right
+        self.add_wheel(Point3(-1.4, -1.4, 0.5), False)  # Rear left
 
         
 
         
     def add_wheel(self, pos, front):
-        # wheel_np = loader.loadModel("models/smiley")  # Use any small sphere-like object
-        # wheel_np.setScale(0.25)
-        # wheel_np.reparentTo(self.render)
+        wheel_np = loader.loadModel("models/wheels.gltf")  # Use any small sphere-like object
+        wheel_np.setScale(0.20)
+        wheel_np.reparentTo(self.render)
 
         wheel = self.vehicle.createWheel()
-        # wheel.setNode(wheel_np.node())
+        wheel.setNode(wheel_np.node())
         wheel.setChassisConnectionPointCs(pos)
         wheel.setFrontWheel(front)
         wheel.setWheelDirectionCs(Vec3(0, 0, -1))
         wheel.setWheelAxleCs(Vec3(1, 0, 0))
-        wheel.setWheelRadius(0.4)
+        wheel.setWheelRadius(0.20)
         wheel.setMaxSuspensionTravelCm(40.0)
 
         wheel.setSuspensionStiffness(40.0)
         wheel.setWheelsDampingRelaxation(2.3)
         wheel.setWheelsDampingCompression(4.4)
-        wheel.setFrictionSlip(100.0)
-        wheel.setRollInfluence(0.1)
+        wheel.setFrictionSlip(20.0)
+        wheel.setRollInfluence(0)
 
-        # self.wheel_nps.append(wheel_np)
+        self.wheel_nps.append(wheel_np)
 
     def setup_controls(self):
         inputState.watchWithModifiers('forward', 'w')
@@ -183,6 +188,9 @@ class VehicleSim(ShowBase):
             engineForce = 2000.0
         elif inputState.isSet('reverse'):
             brakeForce = 100.0
+        else:
+            # If no input, apply some brake to slow down
+            brakeForce = 20.0
 
         # Apply steering (front wheels)
         self.vehicle.setSteeringValue(self.steering, 0)
@@ -195,13 +203,17 @@ class VehicleSim(ShowBase):
 
         # Attach camera to car
         self.camera.reparentTo(self.chassis_np)
-        self.camera.setPos(0, -20, 5)
+        self.camera.setPos(0, -25, 10) # 0, -20, 5
         self.camera.lookAt(self.chassis_np)
 
         self.cam_np.reparentTo(self.chassis_np)
-        self.cam_np.setPos(0, -5, 10)
+        self.cam_np.setPos(0, -5, 10) 
         self.cam_np.lookAt(0, 5, 0)
-        
+
+        velocity = self.vehicle.getCurrentSpeedKmHour()
+        speed = velocity
+        print(f"Speed: {speed:.2f} units/sec")
+            
 
         # Step simulation
         self.world.doPhysics(dt, 10, 0.008)
