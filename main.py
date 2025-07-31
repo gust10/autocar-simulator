@@ -16,21 +16,44 @@ from panda3d.bullet import BulletDebugNode
 from panda3d.core import WindowProperties, FrameBufferProperties, GraphicsOutput, Texture, GraphicsPipe, CardMaker
 from panda3d.core import PNMImage
 from panda3d.core import Camera, NodePath, OrthographicLens
+from panda3d.core import Lens
 
 import numpy as np
 import cv2
 
+import live_plot
+
+# Start the live graph once
+# live_plot.run_in_thread()
+
+class PIDController:
+    def __init__(self, kp, ki, kd):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.prev_error = 0
+        self.integral = 0
+
+    def update(self, target, current, dt):
+        error = target - current
+        self.integral += error * dt
+        derivative = (error - self.prev_error) / dt if dt > 0 else 0
+        self.prev_error = error
+
+        return self.kp * error + self.ki * self.integral + self.kd * derivative
+
+
 class VehicleSim(ShowBase):
     def __init__(self):
         ShowBase.__init__(self)
-        self.set_background_color(0.09, 0.353, 0.922) # Set background color to blue
+        self.set_background_color(0.063, 0.455, 0.988) # Set background color to blue
         # self.disable_mouse()
 
         debugNode = BulletDebugNode('Debug')
         debugNode.showWireframe(True)
 
         debugNP = render.attachNewNode(debugNode)
-        debugNP.show()
+        # debugNP.show()
 
         
 
@@ -51,7 +74,7 @@ class VehicleSim(ShowBase):
         self.steeringClamp = 30.0  # degrees
         self.steeringIncrement = 100.0  # degrees per second
 
-
+        self.start_time = time.time()
         
 
         self.taskMgr.add(self.update, 'updateWorld')
@@ -87,12 +110,26 @@ class VehicleSim(ShowBase):
         self.world.attachRigidBody(ground_np.node())
 
         # Visual ground
-        cm = CardMaker("ground")
-        cm.setFrame(-50, 50, -50, 50)
-        ground_vis = self.render.attachNewNode(cm.generate())
-        ground_vis.setPos(0, 0, -1)
-        ground_vis.setHpr(0, -90, 0)
-        ground_vis.setColor(1, 1, 1)
+        # cm = CardMaker("ground")
+        # cm.setFrame(-50, 50, -50, 50)
+        # ground_vis = self.render.attachNewNode(cm.generate())
+        # ground_vis.setPos(0, 0, -1)
+        # ground_vis.setHpr(0, -90, 0)
+        # ground_vis.setColor(1, 1, 1)
+
+        # Visual track
+        track_vis = loader.loadModel("models/track1.gltf")
+        track_vis.setScale(30.0, 30.0, 30.0)  # Adjust scale as needed
+        track_vis.setPos(0, 0, -1)
+        track_vis.reparentTo(self.render)
+
+        track2_vis = loader.loadModel("models/track2.gltf")
+        track2_vis.setScale(32.0, 32.0, 32.0)  # Adjust scale as needed
+        track2_vis.setPos(200, 0, -1)
+        track2_vis.reparentTo(self.render)
+        
+        
+
 
 
 
@@ -130,6 +167,14 @@ class VehicleSim(ShowBase):
         self.add_wheel(Point3( 1.4, -1.4, 0.5), False)  # Rear right
         self.add_wheel(Point3(-1.4, -1.4, 0.5), False)  # Rear left
 
+        # Camera model
+        cam_model = loader.loadModel("models/camera.egg")  # Replace with better model if desired
+        
+        cam_model.setHpr(0, 0, 0)  # Adjust rotation if needed
+        cam_model.setScale(0.5, 0.5, 0.5)  # Scale to match physics shape
+        cam_model.setPos(0, -5, 10)  # Position to match physics shape
+        cam_model.lookAt(0, 15, 0)  # Look at the front of the car
+        cam_model.reparentTo(self.chassis_np)
         
 
         
@@ -192,28 +237,49 @@ class VehicleSim(ShowBase):
             # If no input, apply some brake to slow down
             brakeForce = 20.0
 
+        # Display current speed
+        velocity = self.vehicle.getCurrentSpeedKmHour()
+        current_speed = velocity
+        print(f"Speed: {current_speed:.2f} units/sec")
+
+        # Trying out PID controller for speed control
+        # PID setup
+        speed_pid = PIDController(kp=500, ki=0, kd=0)
+        target_speed = 50.0  # Target speed in km/h
+        engine_force = speed_pid.update(target_speed, current_speed, dt)
+
+        # Optional: Clamp force to prevent excessive values
+        engine_force = max(min(engine_force, 10000), -200)
+
+        # Apply the engine force to the wheels
+        for i in [2, 3]:  # Rear wheels
+            self.vehicle.applyEngineForce(engine_force, i)
+
+        # plotting a live graph
+        # # Feed data to live plot
+        # elapsed = time.time() - self.start_time
+        # live_plot.add_data(elapsed, current_speed, target_speed)
+
         # Apply steering (front wheels)
         self.vehicle.setSteeringValue(self.steering, 0)
         self.vehicle.setSteeringValue(self.steering, 1)
 
         # Apply force (rear wheels)
-        for i in [2, 3]:
-            self.vehicle.applyEngineForce(engineForce, i)
-            self.vehicle.setBrake(brakeForce, i)
+        # for i in [2, 3]:
+        #     self.vehicle.applyEngineForce(engineForce, i)
+        #     self.vehicle.setBrake(brakeForce, i)
 
         # Attach camera to car
         self.camera.reparentTo(self.chassis_np)
-        self.camera.setPos(0, -25, 10) # 0, -20, 5
+        self.camera.setPos(10, -30, 30) # 0, -20, 5
         self.camera.lookAt(self.chassis_np)
 
         self.cam_np.reparentTo(self.chassis_np)
         self.cam_np.setPos(0, -5, 10) 
-        self.cam_np.lookAt(0, 5, 0)
+        self.cam_np.lookAt(0, 15, 0)
+        self.cam_np.node().getLens().setFov(90)  # Set camera field of view
 
-        velocity = self.vehicle.getCurrentSpeedKmHour()
-        speed = velocity
-        print(f"Speed: {speed:.2f} units/sec")
-            
+        
 
         # Step simulation
         self.world.doPhysics(dt, 10, 0.008)
