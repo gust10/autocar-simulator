@@ -22,6 +22,7 @@ import numpy as np
 import cv2
 
 import live_plot
+from steering_control import calculate_steering_angle
 
 # Start the live graph once
 # live_plot.run_in_thread()
@@ -83,7 +84,7 @@ class VehicleSim(ShowBase):
         self.tex = Texture()
 
         # Create a separate buffer for the camera
-        winprops = WindowProperties.size(320, 240)
+        winprops = WindowProperties.size(160, 120)
         fbprops = FrameBufferProperties()
         fbprops.setRgbColor(True)
         fbprops.setDepthBits(1)
@@ -98,7 +99,7 @@ class VehicleSim(ShowBase):
 
         # Attach a new camera to render to this buffer
         self.cam_np = self.makeCamera(self.buffer)
-        
+
 
     def setup_environment(self):
         # Ground
@@ -118,14 +119,14 @@ class VehicleSim(ShowBase):
         # ground_vis.setColor(1, 1, 1)
 
         # Visual track
-        track_vis = loader.loadModel("models/track1.gltf")
-        track_vis.setScale(30.0, 30.0, 30.0)  # Adjust scale as needed
-        track_vis.setPos(0, 0, -1)
-        track_vis.reparentTo(self.render)
+        # track_vis = loader.loadModel("models/track1.gltf")
+        # track_vis.setScale(30.0, 30.0, 30.0)  # Adjust scale as needed
+        # track_vis.setPos(0, 0, -1)
+        # track_vis.reparentTo(self.render)
 
         track2_vis = loader.loadModel("models/track2.gltf")
         track2_vis.setScale(32.0, 32.0, 32.0)  # Adjust scale as needed
-        track2_vis.setPos(200, 0, -1)
+        track2_vis.setPos(0, 0, -1) # 250, 0, -1
         track2_vis.reparentTo(self.render)
         
         
@@ -141,6 +142,7 @@ class VehicleSim(ShowBase):
         self.chassis_np = self.render.attachNewNode(BulletRigidBodyNode('Vehicle'))
         self.chassis_np.node().addShape(shape, ts)
         self.chassis_np.setPos(0, 0, 0)
+        self.chassis_np.setHpr(45, 0, 0)  # Adjust orientation if needed
         self.chassis_np.node().setMass(400.0)
         self.chassis_np.node().set_linear_damping(0.1) # added
         self.chassis_np.node().set_angular_damping(0.1) # added
@@ -172,8 +174,8 @@ class VehicleSim(ShowBase):
         
         cam_model.setHpr(0, 0, 0)  # Adjust rotation if needed
         cam_model.setScale(0.5, 0.5, 0.5)  # Scale to match physics shape
-        cam_model.setPos(0, -5, 10)  # Position to match physics shape
-        cam_model.lookAt(0, 15, 0)  # Look at the front of the car
+        cam_model.setPos(0, 0, 5)  # Position to match physics shape
+        cam_model.lookAt(0, 10, 0)  # Look at the front of the car
         cam_model.reparentTo(self.chassis_np)
         
 
@@ -208,22 +210,7 @@ class VehicleSim(ShowBase):
 
     def update(self, task):
         dt = globalClock.getDt()
-
-        # --- Steering Logic ---
-        if inputState.isSet('turnLeft'):
-            self.steering += dt * self.steeringIncrement
-            self.steering = min(self.steering, self.steeringClamp)
-        elif inputState.isSet('turnRight'):
-            self.steering -= dt * self.steeringIncrement
-            self.steering = max(self.steering, -self.steeringClamp)
-        else:
-            # Relax steering slowly
-            if self.steering > 0:
-                self.steering -= dt * self.steeringIncrement
-                self.steering = max(self.steering, 0)
-            elif self.steering < 0:
-                self.steering += dt * self.steeringIncrement
-                self.steering = min(self.steering, 0)
+        target_angle = 0.0
 
         # --- Engine and Brake Logic ---
         engineForce = 0.0
@@ -237,16 +224,20 @@ class VehicleSim(ShowBase):
             # If no input, apply some brake to slow down
             brakeForce = 20.0
 
+        
+
         # Display current speed
         velocity = self.vehicle.getCurrentSpeedKmHour()
         current_speed = velocity
-        print(f"Speed: {current_speed:.2f} units/sec")
+        # print(f"Speed: {current_speed:.2f} units/sec")
 
         # Trying out PID controller for speed control
         # PID setup
         speed_pid = PIDController(kp=500, ki=0, kd=0)
         target_speed = 50.0  # Target speed in km/h
         engine_force = speed_pid.update(target_speed, current_speed, dt)
+
+        
 
         # Optional: Clamp force to prevent excessive values
         engine_force = max(min(engine_force, 10000), -200)
@@ -260,9 +251,7 @@ class VehicleSim(ShowBase):
         # elapsed = time.time() - self.start_time
         # live_plot.add_data(elapsed, current_speed, target_speed)
 
-        # Apply steering (front wheels)
-        self.vehicle.setSteeringValue(self.steering, 0)
-        self.vehicle.setSteeringValue(self.steering, 1)
+       
 
         # Apply force (rear wheels)
         # for i in [2, 3]:
@@ -275,14 +264,11 @@ class VehicleSim(ShowBase):
         self.camera.lookAt(self.chassis_np)
 
         self.cam_np.reparentTo(self.chassis_np)
-        self.cam_np.setPos(0, -5, 10) 
-        self.cam_np.lookAt(0, 15, 0)
+        self.cam_np.setPos(0, 0, 5) 
+        self.cam_np.lookAt(0, 10, 0)
         self.cam_np.node().getLens().setFov(90)  # Set camera field of view
 
         
-
-        # Step simulation
-        self.world.doPhysics(dt, 10, 0.008)
 
         # Grab image from render-to-texture
         if self.tex.hasRamImage():
@@ -294,6 +280,29 @@ class VehicleSim(ShowBase):
             img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             img = cv2.flip(img, 0)  # 👈 Fix upside down
 
+            target_angle = calculate_steering_angle(img, max_angle_deg=self.steeringClamp)
+            print(f"Steering Angle: {target_angle:.2f} radians")
+
+            # --- Steering Logic ---
+            if target_angle > self.steering:
+                self.steering += dt * self.steeringIncrement
+                self.steering = min(self.steering, self.steeringClamp)
+            elif target_angle < self.steering:
+                self.steering -= dt * self.steeringIncrement
+                self.steering = max(self.steering, -self.steeringClamp)
+            else:
+                # Relax steering slowly
+                if self.steering > 0:
+                    self.steering -= dt * self.steeringIncrement
+                    self.steering = max(self.steering, 0)
+                elif self.steering < 0:
+                    self.steering += dt * self.steeringIncrement
+                    self.steering = min(self.steering, 0)
+
+
+            
+            
+
             # Optional OpenCV logic here:
             # cv2.imshow("Camera View", img)
             # cv2.waitKey(1)
@@ -301,22 +310,36 @@ class VehicleSim(ShowBase):
             #------------------------------------------------------
             # OPENCV LOGIC HERE
             #------------------------------------------------------
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)            # Grayscale
-            edges = cv2.Canny(gray, 50, 150)                        # Edge detection
+            # gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)            # Grayscale
+            # edges = cv2.Canny(gray, 50, 150)                        # Edge detection
 
-            # Convert edges back to BGR to overlay
-            edges_bgr = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+            # # Convert edges back to BGR to overlay
+            # edges_bgr = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
 
-            # Draw a red rectangle (x=50, y=50 to x=150, y=150)
-            # cv2.rectangle(edges_bgr, (50, 50), (150, 150), (0, 0, 255), 2)
+            # # Draw a red rectangle (x=50, y=50 to x=150, y=150)
+            # # cv2.rectangle(edges_bgr, (50, 50), (150, 150), (0, 0, 255), 2)
 
-            # Show in a window
-            cv2.imshow("Camera View with Edges", edges_bgr)
-            cv2.waitKey(1)
+            # # Show in a window
+            
 
             #-------------------------------------------------------
             # END OF OPENCV LOGIC
             #-------------------------------------------------------
+
+        # PID for steering angle
+        angle_pid = PIDController(kp=1, ki=0, kd=0)
+        # self.steering = angle_pid.update(target_angle, self.steering, dt)
+        # Clamp steering to max angle
+        # self.steering = max(min(self.steering, self.steeringClamp), -self.steeringClamp)
+
+        # Apply steering (front wheels)
+        self.vehicle.setSteeringValue(self.steering, 0)
+        self.vehicle.setSteeringValue(self.steering, 1)
+
+        # Step simulation
+        self.world.doPhysics(dt, 10, 0.008)
+
+        
 
         return Task.cont
 
